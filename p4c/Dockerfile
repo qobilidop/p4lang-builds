@@ -25,11 +25,17 @@ RUN git clone --depth 1 --branch "v${VERSION}" --recursive \
       -DENABLE_GTESTS=OFF \
  && cmake --build /tmp/p4c/build -j"$(nproc)" \
  && DESTDIR=/stage cmake --install /tmp/p4c/build
+# Stage upstream license texts so the final image redistributes them alongside
+# the binaries (p4c is REUSE-style: LICENSES/ holds every license in the tree).
+RUN mkdir -p /stage/usr/local/share/doc/p4c \
+ && cp -r /tmp/p4c/LICENSES /stage/usr/local/share/doc/p4c/
 
 # Runtime dependencies are installed as -dev packages for simplicity (they
 # pull the runtime libs; the extra headers cost some size, not correctness).
 # cpp is p4c's preprocessor at runtime; python3 serves p4c helper scripts.
 FROM ubuntu:24.04
+LABEL org.opencontainers.image.source=https://github.com/qobilidop/p4lang-builds \
+      org.opencontainers.image.licenses=Apache-2.0
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       cpp python3 \

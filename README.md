@@ -50,6 +50,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 or graft either one alone onto any noble-based image the same way (its
 runtime libs are listed in the final stage of its Dockerfile).
 
+## License
+
+The recipes in this repo are Apache-2.0 (see [LICENSE](LICENSE)). The
+published images redistribute compiled p4c and BMv2 (both Apache-2.0);
+each image carries the upstream license texts under
+`/usr/local/share/doc/{p4c,bmv2}/`, plus Ubuntu packages which carry
+theirs in `/usr/share/doc` as usual.
+
 ## Notes for future me
 
 - Build knowledge encoded in the Dockerfiles: BMv2 needs thrift for its
