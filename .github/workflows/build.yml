@@ -5,23 +5,24 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  IMAGE: ghcr.io/${{ github.repository }}/toolchain
-
 jobs:
   build:
     strategy:
       matrix:
+        image: [p4c, bmv2]
+        arch: [amd64, arm64]
         include:
-          - runner: ubuntu-latest
-            arch: amd64
-          - runner: ubuntu-24.04-arm
-            arch: arm64
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     permissions:
       contents: read
       packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}/${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,10 +38,10 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.image }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,push=true
-          cache-from: type=gha,scope=${{ matrix.arch }}
-          cache-to: type=gha,scope=${{ matrix.arch }},mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }},mode=max
 
       - name: Export digest
         run: |
@@ -49,23 +50,27 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: digest-${{ matrix.arch }}
+          name: digest-${{ matrix.image }}-${{ matrix.arch }}
           path: /tmp/digests/*
 
   merge:
     needs: build
+    strategy:
+      matrix:
+        image: [p4c, bmv2]
     runs-on: ubuntu-latest
     permissions:
       packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}/${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Derive tag from Dockerfile pins
+      - name: Derive tag from Dockerfile pin
         id: ver
         run: |
-          p4c=$(grep -oP '^ARG P4C_VERSION=\K.*' Dockerfile)
-          bmv2=$(grep -oP '^ARG BMV2_VERSION=\K.*' Dockerfile)
-          echo "tag=${p4c}-${bmv2}-noble" >> "$GITHUB_OUTPUT"
+          version=$(grep -oP '^ARG VERSION=\K.*' "${{ matrix.image }}/Dockerfile")
+          echo "tag=${version}-noble" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v3
         with:
@@ -73,19 +78,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Enforce tag immutability
+      # Immutability: a published tag is never re-pushed. An existing tag is not an
+      # error — the other image may have been bumped independently — it just
+      # means there is nothing to publish for this one.
+      - name: Check tag immutability
+        id: exists
         run: |
           if docker manifest inspect "${IMAGE}:${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
-            echo "::error::tag ${{ steps.ver.outputs.tag }} already exists; bump the version ARGs"
-            exit 1
+            echo "::notice::tag ${{ steps.ver.outputs.tag }} already published; skipping"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/download-artifact@v4
+        if: steps.exists.outputs.exists == 'false'
         with:
+          pattern: digest-${{ matrix.image }}-*
           path: /tmp/digests
           merge-multiple: true
 
       - name: Create multi-arch manifest
+        if: steps.exists.outputs.exists == 'false'
         run: |
           docker buildx imagetools create \
             -t "${IMAGE}:${{ steps.ver.outputs.tag }}" \
